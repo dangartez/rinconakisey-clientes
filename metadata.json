@@ -1,0 +1,5 @@
+{
+  "name": "El Rincón de Akisey PWA",
+  "description": "A Progressive Web App for clients of the El Rincón de Akisey aesthetic center to book and manage their appointments autonomously.",
+  "requestFramePermissions": []
+}
