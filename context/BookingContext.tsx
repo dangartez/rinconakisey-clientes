@@ -3,37 +3,59 @@ import { Service, Professional, Appointment } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
 interface BookingState {
-    service: Service | null;
+    services: Service[];
     professional: Professional | null;
     date: Date | null;
     time: string | null;
-    appointmentToEdit: Appointment | null;
+    appointmentsToEdit: Appointment[] | null;
 }
 
 interface BookingContextType {
   bookingState: BookingState;
+  addService: (service: Service) => void;
+  removeService: (serviceId: number) => void;
+  clearServices: () => void;
   setService: (service: Service) => void;
   setProfessional: (professional: Professional | null) => void;
   setDateTime: (date: Date, time: string) => void;
   setAppointmentToEdit: (appointment: Appointment | null) => void;
+  setupGroupEdit: (appointments: Appointment[], services: Service[]) => void;
   resetBooking: () => void;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
 
 const initialState: BookingState = {
-    service: null,
+    services: [],
     professional: null,
     date: null,
     time: null,
-    appointmentToEdit: null,
+    appointmentsToEdit: null,
 };
 
 export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [bookingState, setBookingState] = useState<BookingState>(initialState);
 
+  const addService = useCallback((service: Service) => {
+    setBookingState(prev => ({
+      ...prev,
+      services: [...prev.services, service]
+    }));
+  }, []);
+
+  const removeService = useCallback((serviceId: number) => {
+    setBookingState(prev => ({
+      ...prev,
+      services: prev.services.filter(s => s.id !== serviceId)
+    }));
+  }, []);
+
+  const clearServices = useCallback(() => {
+    setBookingState(prev => ({ ...initialState, appointmentsToEdit: prev.appointmentsToEdit }));
+  }, []);
+
   const setService = useCallback((service: Service) => {
-    setBookingState(prev => ({ ...initialState, service, appointmentToEdit: prev.appointmentToEdit }));
+    setBookingState(prev => ({ ...prev, services: [service] }));
   }, []);
   
   const setProfessional = useCallback((professional: Professional | null) => {
@@ -65,24 +87,62 @@ export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         if (service) {
             setBookingState({
-                service: service as Service,
+                ...initialState,
+                services: [service as Service],
                 professional: professional as Professional || null,
                 date: appointment.start,
                 time: appointment.start.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-                appointmentToEdit: appointment,
+                appointmentsToEdit: [appointment],
             });
         }
     } else {
-        setBookingState(prev => ({ ...prev, appointmentToEdit: null }));
+        setBookingState(prev => ({ ...prev, appointmentsToEdit: null }));
     }
 }, []);
+
+  const setupGroupEdit = useCallback(async (appointments: Appointment[], services: Service[]) => {
+    if (appointments.length > 0) {
+        const firstAppointment = appointments[0];
+
+        const { data: professional, error } = await supabase
+            .from('professionals')
+            .select('*')
+            .eq('id', firstAppointment.professionalId)
+            .single();
+
+        if (error) {
+            console.error("Error fetching professional for group edit", error);
+            return;
+        }
+
+        setBookingState(prev => ({
+            ...prev,
+            services: services,
+            professional: professional as Professional,
+            appointmentsToEdit: appointments,
+            date: firstAppointment.start, // Set date and time from the first appointment of the group
+            time: firstAppointment.start.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+        }));
+    }
+  }, []);
 
   const resetBooking = useCallback(() => {
     setBookingState(initialState);
   }, []);
 
   return (
-    <BookingContext.Provider value={{ bookingState, setService, setProfessional, setDateTime, setAppointmentToEdit, resetBooking }}>
+    <BookingContext.Provider value={{ 
+      bookingState, 
+      addService, 
+      removeService, 
+      clearServices, 
+      setService,
+      setProfessional, 
+      setDateTime, 
+      setAppointmentToEdit, 
+      setupGroupEdit,
+      resetBooking 
+    }}>
       {children}
     </BookingContext.Provider>
   );

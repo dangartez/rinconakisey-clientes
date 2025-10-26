@@ -18,6 +18,7 @@ interface DetailedAppointment extends Appointment {
   professional_id: number;
   start_time: string;
   end_time: string;
+  booking_group_id?: string | null;
 }
 
 interface DetailedVoucher extends Voucher {
@@ -73,7 +74,7 @@ const ProfilePage: React.FC = () => {
     const { data, error } = await supabase
       .from('appointments')
       .select(`
-        *,
+        id, start_time, end_time, status, service_id, professional_id, booking_group_id,
         services (*),
         professionals (*)
       `)
@@ -118,8 +119,24 @@ const ProfilePage: React.FC = () => {
   }, []);
 
   const { upcomingAppointments, pastAppointments } = useMemo(() => {
-    const upcoming = appointments.filter(a => a.status === 'upcoming' || a.status === 'confirmada').sort((a,b) => a.start.getTime() - b.start.getTime());
-    const past = appointments.filter(a => a.status !== 'upcoming' && a.status !== 'confirmada').sort((a,b) => b.start.getTime() - a.start.getTime());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to the beginning of today
+
+    const upcoming = appointments
+      .filter(a => 
+        (a.status === 'Confirmada' || a.status === 'confirmada') && 
+        a.start >= today
+      )
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const past = appointments
+      .filter(a => {
+        const isPastConfirmed = (a.status === 'Confirmada' || a.status === 'confirmada') && a.start < today;
+        const isCompleted = a.status === 'Completada' || a.status === 'completed';
+        return isPastConfirmed || isCompleted;
+      })
+      .sort((a, b) => b.start.getTime() - a.start.getTime());
+
     return { upcomingAppointments: upcoming, pastAppointments: past };
   }, [appointments]);
 
@@ -142,6 +159,7 @@ const ProfilePage: React.FC = () => {
       start: appointment.start,
       end: appointment.end,
       status: appointment.status as any,
+      booking_group_id: appointment.booking_group_id,
     };
     setAppointmentToEdit(apptToEdit);
     navigate('/reservar');
@@ -160,7 +178,7 @@ const ProfilePage: React.FC = () => {
     if (cancelModalState.appointment) {
         const { error } = await supabase
             .from('appointments')
-            .update({ status: 'cancelled' })
+            .update({ status: 'Cancelada' })
             .eq('id', cancelModalState.appointment.id);
 
         setCancelModalState({ isOpen: false, appointment: null, serviceName: '', professionalName: '' });
@@ -390,8 +408,11 @@ const AppointmentSection: React.FC<AppointmentSectionProps> = ({ title, appointm
                          const statusStyles = {
                              upcoming: 'border-l-blue-400',
                              confirmada: 'border-l-blue-400',
+                             Confirmada: 'border-l-blue-400',
                              completed: 'border-l-green-400',
-                             cancelled: 'border-l-red-400'
+                             Completada: 'border-l-green-400',
+                             cancelled: 'border-l-red-400',
+                             Cancelada: 'border-l-red-400'
                          };
                          return (
                              <div key={appt.id} className={`bg-white p-5 rounded-lg shadow-md border-l-4 ${statusStyles[appt.status as keyof typeof statusStyles] || 'border-l-gray-300'}`}>
@@ -401,7 +422,7 @@ const AppointmentSection: React.FC<AppointmentSectionProps> = ({ title, appointm
                                          <p className="text-light-text">con {professional.full_name}</p>
                                          <p className="text-light-text font-medium">{appt.start.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                                          {!isPast && <p className="text-primary font-semibold text-lg mt-1">{appt.start.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}h</p>}
-                                         {isPast && <p className="text-sm font-semibold capitalize mt-1 text-gray-600">{appt.status === 'completed' ? 'Completada' : 'Cancelada'}</p>}
+                                         
                                      </div>
                                      {!isPast && onEdit && onCancel && (
                                          <div className="flex items-center space-x-2 mt-4 md:mt-0">

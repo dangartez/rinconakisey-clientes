@@ -21,7 +21,7 @@ export interface Appointment {
   professionalId: string;
   start: Date;
   end: Date;
-  status: 'upcoming' | 'completed' | 'cancelled';
+  status: 'Confirmada' | 'Completada' | 'Cancelada';
 }
 
 export interface Voucher {

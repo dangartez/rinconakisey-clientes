@@ -4,13 +4,16 @@ import { Service } from '../types';
 import { useBooking } from '../context/BookingContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import ServiceConfirmationModal from '../components/booking/ServiceConfirmationModal';
 
 const ServicesPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [services, setServices] = useState<Service[]>([]);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [selectedService, setSelectedService] = useState<Service | null>(null);
 
-  const { setService } = useBooking();
+  const { setService, addService } = useBooking();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -55,15 +58,39 @@ const ServicesPage: React.FC = () => {
   const filteredServices = useMemo(() => {
     return services.filter(service => {
       const matchesCategory = selectedCategory === 'Todos' || service.category === selectedCategory;
-      const matchesSearch = service.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            service.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = (service.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+                            (service.description?.toLowerCase() || '').includes(searchTerm.toLowerCase());
       return matchesCategory && matchesSearch;
     });
   }, [searchTerm, selectedCategory, services]);
 
   const handleBookService = (service: Service) => {
-    setService(service);
+    setSelectedService(service);
+    setShowConfirmationModal(true);
+  };
+
+  const handleConfirmService = () => {
+    if (!selectedService) return;
+    
+    // Limpiamos cualquier estado previo y establecemos el servicio
+    setService(selectedService);
+    // Cerramos el modal y navegamos a reservas
+    setShowConfirmationModal(false);
     navigate('/reservar');
+  };
+
+  const handleDeclineService = () => {
+    if (!selectedService) return;
+    
+    // Limpiamos cualquier estado previo y establecemos el servicio
+    setService(selectedService);
+    // Cerramos el modal y navegamos directamente al paso 2
+    setShowConfirmationModal(false);
+    navigate('/reservar?skipToStep=2');
+  };
+
+  const handleCancelSelection = () => {
+    setShowConfirmationModal(false);
   };
 
   return (
@@ -125,6 +152,15 @@ const ServicesPage: React.FC = () => {
           <p className="col-span-full text-center text-light-text text-lg">No se encontraron servicios que coincidan con tu búsqueda.</p>
         )}
       </div>
+
+      {/* Modal de confirmación */}
+      <ServiceConfirmationModal
+        isOpen={showConfirmationModal}
+        service={selectedService}
+        onConfirm={handleConfirmService}
+        onDecline={handleDeclineService}
+        onCancel={handleCancelSelection}
+      />
     </div>
   );
 };

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSettings } from '../context/SettingsContext';
 import { Service, Promotion } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import ServiceConfirmationModal from '../components/booking/ServiceConfirmationModal';
 
 const HomePage: React.FC = () => {
     const { setService } = useBooking();
@@ -15,6 +16,9 @@ const HomePage: React.FC = () => {
     const [services, setServices] = useState<Service[]>([]);
     const [pageLoading, setPageLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+    const [selectedService, setSelectedService] = useState<Service | null>(null);
 
     useEffect(() => {
         const fetchPageData = async () => {
@@ -48,8 +52,26 @@ const HomePage: React.FC = () => {
     }, [settings, settingsLoading]);
 
     const handleBookService = (service: Service) => {
-        setService(service);
+        setSelectedService(service);
+        setShowConfirmationModal(true);
+    };
+
+    const handleConfirmService = () => {
+        if (!selectedService) return;
+        setService(selectedService);
+        setShowConfirmationModal(false);
         navigate('/reservar');
+    };
+
+    const handleDeclineService = () => {
+        if (!selectedService) return;
+        setService(selectedService);
+        setShowConfirmationModal(false);
+        navigate('/reservar?skipToStep=2');
+    };
+
+    const handleCancelSelection = () => {
+        setShowConfirmationModal(false);
     };
 
     const isLoading = settingsLoading || pageLoading;
@@ -132,6 +154,14 @@ const HomePage: React.FC = () => {
           </div>
         </section>
       )}
+
+      <ServiceConfirmationModal
+        isOpen={showConfirmationModal}
+        service={selectedService}
+        onConfirm={handleConfirmService}
+        onDecline={handleDeclineService}
+        onCancel={handleCancelSelection}
+      />
     </div>
   );
 };
