@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useBooking } from '../context/BookingContext';
-import { Service, Professional, TimeSlot } from '../types';
+import { Service, Professional, TimeSlot, Appointment } from '../types';
 import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon, ClockIcon } from '../components/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import BookingResultModal from '../components/booking/BookingResultModal';
@@ -178,7 +178,7 @@ const ServiceStep: React.FC<ServiceStepProps> = ({ searchTerm, setSearchTerm, ca
                 <button key={service.id} onClick={() => handleSelectService(service)} className="bg-white p-4 rounded-lg shadow text-left hover:shadow-lg hover:ring-2 hover:ring-primary transition">
                     <h3 className="font-bold text-secondary">{service.name}</h3>
                     <p className="text-sm text-light-text">{service.duration} min</p>
-                    <p className="font-semibold text-primary mt-2">{service.price}€</p>
+                    <p className="font-semibold text-primary mt-2">{isNaN(parseFloat(service.price)) ? '0' : service.price}€</p>
                 </button>
             ))}
         </div>
@@ -426,7 +426,23 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
 
 
 
-    const totalPrice = useMemo(() => services.reduce((acc, s) => acc + parseFloat(s.price), 0), [services]);
+    const totalPrice = useMemo(() => {
+        return services.reduce((acc, s) => {
+            // Handle different price formats for bono services vs regular services
+            let price = 0;
+            
+            if (s.price === null || s.price === undefined) {
+                price = 0;
+            } else if (typeof s.price === 'string') {
+                price = parseFloat(s.price);
+            } else if (typeof s.price === 'number') {
+                price = s.price;
+            }
+            
+            // If price is NaN or negative, treat it as 0
+            return acc + (isNaN(price) || price < 0 ? 0 : price);
+        }, 0);
+    }, [services]);
 
 
 
@@ -436,7 +452,7 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
 
     const professionalName = professional?.full_name || 'Cualquier profesional';
 
-    const formattedDate = date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const formattedDate = date ? date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Fecha no disponible';
 
     
 
@@ -458,7 +474,7 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
 
                     {services.map(s => (
 
-                        <p key={s.id} className="text-lg text-secondary">- {s.name} ({s.price}€)</p>
+                        <p key={s.id} className="text-lg text-secondary">- {s.name} ({isNaN(parseFloat(s.price)) ? '0' : s.price}€)</p>
 
                     ))}
 
@@ -1538,7 +1554,7 @@ const BookingPage: React.FC = () => {
 
 
 
-            const newInitialStartTime = new Date(bookingState.date);
+            const newInitialStartTime = bookingState.date ? new Date(bookingState.date) : new Date();
 
 
 
@@ -1638,7 +1654,7 @@ const BookingPage: React.FC = () => {
 
 
 
-                    let runningTime = new Date(newInitialStartTime);
+                    let runningTime = newInitialStartTime ? new Date(newInitialStartTime) : new Date();
 
 
 
@@ -1746,7 +1762,7 @@ const BookingPage: React.FC = () => {
 
 
 
-                let runningTime = new Date(newInitialStartTime);
+                let runningTime = newInitialStartTime ? new Date(newInitialStartTime) : new Date();
 
 
 
@@ -1762,7 +1778,21 @@ const BookingPage: React.FC = () => {
 
 
 
-                    const endTime = new Date(runningTime.getTime() + service.duration * 60000);
+                                        const durationInMinutes = (typeof service.duration === 'number' && !isNaN(service.duration)) ? service.duration : 0;
+
+
+
+                                        const endTime = new Date(runningTime.getTime() + durationInMinutes * 60000);
+
+
+
+                                        let price = 0;
+                    if (typeof service.price === 'string') {
+                        price = parseFloat(service.price);
+                    } else if (typeof service.price === 'number') {
+                        price = service.price;
+                    }
+                    price = isNaN(price) || price < 0 ? 0 : price;
 
 
 

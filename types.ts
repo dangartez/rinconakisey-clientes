@@ -22,6 +22,7 @@ export interface Appointment {
   start: Date;
   end: Date;
   status: 'Confirmada' | 'Completada' | 'Cancelada';
+  booking_group_id?: string | null;
 }
 
 export interface Voucher {
@@ -29,6 +30,26 @@ export interface Voucher {
   serviceId: number;
   totalSessions: number;
   remainingSessions: number;
+}
+
+export interface ClientBono {
+  id: string;
+  client_id: string;
+  bono_id: number;
+  remaining_sessions: number;
+  purchase_date: string;
+  bono_definition: BonoDefinition;
+}
+
+export interface BonoDefinition {
+  id: number;
+  name: string;
+  total_sessions: number;
+  price: number;
+  type: string;
+  is_active: boolean;
+  created_at: string;
+  services: Service[];
 }
 
 export interface Promotion {
@@ -39,6 +60,7 @@ export interface Promotion {
   original_price: number;
   promo_price: number;
   is_active: boolean;
+  services?: Service[]; // Add this line
 }
 
 export interface Client {

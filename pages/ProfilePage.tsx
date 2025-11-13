@@ -1,36 +1,85 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Appointment, Voucher, Service, Professional } from '../types';
+import { Appointment, Voucher, Service, Professional, ClientBono, BonoDefinition } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { useBooking } from '../context/BookingContext';
 import CancelConfirmationModal from '../components/profile/CancelConfirmationModal';
-import EditProfileForm from '../components/profile/EditProfileForm';
-import { PencilIcon, EnvelopeIcon, PhoneIcon, UserCircleIcon } from '../components/icons';
+import { GearIcon } from '../components/icons';
 import SuccessToast from '../components/common/SuccessToast';
 import { supabase } from '../lib/supabaseClient';
 import BookingResultModal from '../components/booking/BookingResultModal';
+import SettingsModal from '../components/profile/SettingsModal';
+
+// AddServicePrompt component for voucher flow
+interface AddServicePromptProps {
+    isOpen: boolean;
+    onConfirm: () => void;
+    onDecline: () => void;
+    onCancel: () => void;
+    selectedServices: Service[];
+}
+
+const AddServicePrompt: React.FC<AddServicePromptProps> = ({ isOpen, onConfirm, onDecline, onCancel, selectedServices }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 md:p-8 max-w-sm mx-auto text-center">
+                <div className="mb-4">
+                    <h3 className="text-xl font-bold text-secondary mb-2">Servicio Seleccionado:</h3>
+                    <ul className="list-disc list-inside text-left text-light-text">
+                        {selectedServices.map(service => (
+                            <li key={service.id}>{service.name}</li>
+                        ))}
+                    </ul>
+                </div>
+                <p className="text-light-text mb-6">¿Quieres añadir otro servicio más para <strong>el mismo día</strong>?</p>
+                <div className="flex flex-col items-center space-y-4">
+                    <div className="flex justify-center space-x-4">
+                        <button onClick={onDecline} className="px-8 py-2 rounded-lg font-semibold bg-gray-200 text-secondary hover:bg-gray-300 transition-colors">
+                            No
+                        </button>
+                        <button onClick={onConfirm} className="px-8 py-2 rounded-lg font-semibold bg-gray-200 text-secondary hover:bg-gray-300 transition-colors">
+                            Sí
+                        </button>
+                    </div>
+                    <button onClick={onCancel} className="px-6 py-2 rounded-lg font-semibold text-light-text hover:bg-gray-100 transition-colors">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // Define a more detailed appointment type for the UI
-interface DetailedAppointment extends Appointment {
+interface DetailedAppointment {
+  id: string;
   services: Service;
   professionals: Professional;
   service_id: number;
-  professional_id: number;
+  professional_id: string;
   start_time: string;
   end_time: string;
+  status: string;
   booking_group_id?: string | null;
+  start: Date;
+  end: Date;
 }
 
 interface DetailedVoucher extends Voucher {
     bono_definitions: {
-        services: Service;
+        services: Service[];
     }
 }
 
 type Tab = 'appointments' | 'vouchers';
+type VoucherTab = 'active' | 'expired';
 
 const ProfilePage: React.FC = () => {
-  const { user, isLoggedIn, logout, updateUser, setService } = useAuth();
+  const { user, isLoggedIn, logout, updateUser } = useAuth();
+  const { setService, resetBooking } = useBooking();
   const [activeTab, setActiveTab] = useState<Tab>('appointments');
   const navigate = useNavigate();
   const { setAppointmentToEdit } = useBooking();
@@ -38,6 +87,10 @@ const ProfilePage: React.FC = () => {
   
   const [appointments, setAppointments] = useState<DetailedAppointment[]>([]);
   const [vouchers, setVouchers] = useState<DetailedVoucher[]>([]);
+  const [expiredVouchers, setExpiredVouchers] = useState<DetailedVoucher[]>([]);
+  const [isLoadingVouchers, setIsLoadingVouchers] = useState(false);
+  const [activeVoucherTab, setActiveVoucherTab] = useState<VoucherTab>('active');
+  const [lastVouchersFetch, setLastVouchersFetch] = useState<number>(0);
 
   const [cancelModalState, setCancelModalState] = useState<{ isOpen: boolean; appointment: DetailedAppointment | null; serviceName: string; professionalName: string; }>({
     isOpen: false,
@@ -57,8 +110,12 @@ const ProfilePage: React.FC = () => {
     message: '',
   });
 
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  
+  // State for AddServicePrompt modal
+  const [showAddServicePrompt, setShowAddServicePrompt] = useState(false);
+  const [selectedVoucherService, setSelectedVoucherService] = useState<Service | null>(null);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -66,6 +123,7 @@ const ProfilePage: React.FC = () => {
     } else if (user) {
       fetchAppointments();
       fetchVouchers();
+      fetchExpiredVouchers();
     }
   }, [isLoggedIn, user, navigate]);
 
@@ -83,32 +141,131 @@ const ProfilePage: React.FC = () => {
     if (error) {
       console.error('Error fetching appointments:', error);
     } else {
-      const formattedData = data.map(appt => ({
-        ...appt,
-        start: new Date(appt.start_time),
-        end: new Date(appt.end_time),
-      })) as DetailedAppointment[];
+      const formattedData = data.map(appt => {
+        const serviceData = Array.isArray(appt.services) ? appt.services[0] : appt.services;
+        const professionalData = Array.isArray(appt.professionals) ? appt.professionals[0] : appt.professionals;
+        
+        return {
+          id: appt.id,
+          services: serviceData as unknown as Service,
+          professionals: professionalData as unknown as Professional,
+          service_id: appt.service_id,
+          professional_id: appt.professional_id,
+          start_time: appt.start_time,
+          end_time: appt.end_time,
+          status: appt.status,
+          booking_group_id: appt.booking_group_id,
+          start: new Date(appt.start_time),
+          end: new Date(appt.end_time),
+        };
+      }) as DetailedAppointment[];
       setAppointments(formattedData);
     }
   };
 
-  const fetchVouchers = async () => {
+  const fetchVouchers = async (forceRefresh = false) => {
     if (!user) return;
-    const { data, error } = await supabase
-      .from('client_bonos')
-      .select(`
-        *,
-        bono_definitions (
-          *,
-          services (*)
-        )
-      `)
-      .eq('client_id', user.id);
+    
+    const now = Date.now();
+    const fiveMinutes = 5 * 60 * 1000;
+    if (!forceRefresh && (now - lastVouchersFetch) < fiveMinutes && vouchers.length > 0) {
+      return;
+    }
+    
+    setIsLoadingVouchers(true);
+    setLastVouchersFetch(now);
+    
+    try {
+      const { data: activeBonos, error: functionError } = await supabase
+        .rpc('get_client_active_bonos', { p_client_id: user.id });
 
-    if (error) {
-      console.error('Error fetching vouchers:', error);
-    } else {
-      setVouchers(data as DetailedVoucher[]);
+      if (functionError) {
+        console.error('Error fetching active bonos:', functionError);
+        const { data, error } = await supabase
+          .from('client_bonos')
+          .select(`
+            *,
+            bono_definitions (
+              *,
+              bono_definition_services (
+                service_id,
+                services (*)
+              )
+            )
+          `)
+          .eq('client_id', user.id)
+          .gt('remaining_sessions', 0);
+
+        if (error) {
+          console.error('Error fetching vouchers (fallback):', error);
+          setVouchers([]);
+        } else {
+          const transformedData = data.map((item: any) => ({
+            ...item,
+            bono_definitions: {
+              ...item.bono_definitions,
+              services: item.bono_definitions.bono_definition_services.map((bds: any) => bds.services)
+            }
+          }));
+          setVouchers(transformedData as DetailedVoucher[]);
+        }
+      } else {
+        const transformedData = activeBonos.map((item: any) => ({
+          id: item.client_bono_id,
+          remaining_sessions: item.remaining_sessions,
+          purchase_date: item.purchase_date,
+          bono_definitions: {
+            name: item.bono_name,
+            type: item.bono_type,
+            services: item.services
+          }
+        }));
+        setVouchers(transformedData as DetailedVoucher[]);
+      }
+    } catch (error) {
+      console.error('Unexpected error fetching vouchers:', error);
+      setVouchers([]);
+    } finally {
+      setIsLoadingVouchers(false);
+    }
+  };
+
+  const fetchExpiredVouchers = async (forceRefresh = false) => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('client_bonos')
+        .select(`
+          *,
+          bono_definitions (
+            *,
+            bono_definition_services (
+              service_id,
+              services (*)
+            )
+          )
+        `)
+        .eq('client_id', user.id)
+        .lte('remaining_sessions', 0)
+        .order('purchase_date', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching expired vouchers:', error);
+        setExpiredVouchers([]);
+      } else {
+        const transformedData = data.map((item: any) => ({
+          ...item,
+          bono_definitions: {
+            ...item.bono_definitions,
+            services: item.bono_definitions.bono_definition_services.map((bds: any) => bds.services)
+          }
+        }));
+        setExpiredVouchers(transformedData as DetailedVoucher[]);
+      }
+    } catch (error) {
+      console.error('Unexpected error fetching expired vouchers:', error);
+      setExpiredVouchers([]);
     }
   };
 
@@ -120,7 +277,7 @@ const ProfilePage: React.FC = () => {
 
   const { upcomingAppointments, pastAppointments } = useMemo(() => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to the beginning of today
+    today.setHours(0, 0, 0, 0);
 
     const upcoming = appointments
       .filter(a => 
@@ -159,7 +316,6 @@ const ProfilePage: React.FC = () => {
       start: appointment.start,
       end: appointment.end,
       status: appointment.status as any,
-      booking_group_id: appointment.booking_group_id,
     };
     setAppointmentToEdit(apptToEdit);
     navigate('/reservar');
@@ -204,90 +360,68 @@ const ProfilePage: React.FC = () => {
   const handleCloseResultModal = () => {
     setResultModalState({ isOpen: false, status: 'success', message: '' });
     fetchAppointments();
+    fetchVouchers(true);
+    fetchExpiredVouchers(true);
   };
   
   const handleSaveProfile = async (updatedDetails: { full_name: string; phone: string; email: string }) => {
     try {
       await updateUser(updatedDetails);
-      setIsEditingProfile(false);
       setShowSuccessToast(true);
     } catch (error) {
       console.error('Failed to update profile:', error);
     }
   };
 
-  const handleBookFromVoucher = (voucher: DetailedVoucher) => {
-    const serviceToBook = voucher.bono_definitions.services;
-    if (serviceToBook) {
-        setService(serviceToBook);
-        navigate('/reservar');
+  const handleBookFromVoucher = async (voucher: DetailedVoucher) => {
+    const services = voucher.bono_definitions.services;
+    if (services && services.length > 0) {
+        const service = services[0];
+        
+        try {
+            const { data: skills, error: skillsError } = await supabase
+                .from('professional_skills').select('professional_id').eq('service_id', service.id);
+            
+            if (skillsError) {
+                console.error('Error fetching professional skills:', skillsError);
+            }
+            
+            const professionalIds = skillsError ? [] : skills.map(skill => skill.professional_id);
+            const serviceWithProfessionals = {
+                ...service,
+                professionalIds,
+                price: 0
+            };
+            
+            setSelectedVoucherService(serviceWithProfessionals);
+            setService(serviceWithProfessionals);
+            setShowAddServicePrompt(true);
+        } catch (error) {
+            console.error('Error in handleBookFromVoucher:', error);
+            alert('No se ha podido cargar la información del servicio. Por favor, inténtalo de nuevo.');
+        }
     }
+  };
+
+  const handleConfirmAddService = () => {
+    setShowAddServicePrompt(false);
+    navigate('/reservar');
+  };
+
+  const handleDeclineAddService = () => {
+    setShowAddServicePrompt(false);
+    navigate('/reservar?skipToStep=2');
+  };
+
+  const handleCancelAddService = () => {
+    setShowAddServicePrompt(false);
+    setSelectedVoucherService(null);
+    resetBooking();
   };
 
   if (!user) {
     return null; 
   }
-
-  const ProfileDetails = (
-    <div className="bg-white p-6 rounded-lg shadow-md mb-8">
-        <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-secondary">Mis Datos</h2>
-            {!isEditingProfile && (
-                <button
-                    onClick={() => setIsEditingProfile(true)}
-                    className="flex items-center space-x-2 text-sm text-gray-600 font-semibold py-2 px-4 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors"
-                >
-                    <PencilIcon className="w-4 h-4" />
-                    <span>Editar</span>
-                </button>
-            )}
-        </div>
-        {isEditingProfile ? (
-            <EditProfileForm user={user} onSave={handleSaveProfile} onCancel={() => setIsEditingProfile(false)} />
-        ) : (
-            <div className="space-y-4 text-secondary">
-                 <div className="flex items-center space-x-3">
-                    <UserCircleIcon className="w-6 h-6 text-light-text" />
-                    <span>{user.full_name}</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                    <PhoneIcon className="w-6 h-6 text-light-text" />
-                    <span>{user.phone}</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                    <EnvelopeIcon className="w-6 h-6 text-light-text" />
-                    <span>{user.email}</span>
-                </div>
-            </div>
-        )}
-    </div>
-  );
-
-  const NotificationSettings = (
-    <div className="bg-white p-6 rounded-lg shadow-md mb-8">
-      <h2 className="text-2xl font-bold text-secondary mb-4">Recordatorios de Citas</h2>
-      {notificationPermission === 'granted' && (
-        <p className="text-green-600">Los recordatorios por notificación están activados.</p>
-      )}
-      {notificationPermission === 'denied' && (
-        <div>
-          <p className="text-red-600">Has bloqueado las notificaciones.</p>
-          <p className="text-sm text-light-text">Para activarlas, debes cambiar los permisos en la configuración de tu navegador.</p>
-        </div>
-      )}
-      {notificationPermission === 'default' && (
-        <div>
-            <p className="text-light-text mb-4">¿Quieres recibir un recordatorio 24 horas antes de tu cita?</p>
-            <button
-                onClick={requestNotificationPermission}
-                className="bg-secondary text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-opacity-90 transition-colors"
-            >
-                Activar Recordatorios
-            </button>
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -297,13 +431,19 @@ const ProfilePage: React.FC = () => {
           <h1 className="text-4xl font-extrabold text-secondary tracking-tight">Hola, {user.full_name.split(' ')[0]}</h1>
           <p className="mt-1 text-lg text-light-text">Gestiona tus citas y bonos aquí.</p>
         </div>
-        <button onClick={logout} className="mt-4 md:mt-0 bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
-            Cerrar Sesión
-        </button>
+        <div className="flex items-center space-x-4 mt-4 md:mt-0">
+            <button 
+                onClick={() => setIsSettingsModalOpen(true)}
+                className="flex items-center space-x-2 text-sm text-gray-600 font-semibold py-2 px-4 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors"
+            >
+                <GearIcon className="w-5 h-5" />
+                <span className="hidden sm:inline">Ajustes</span>
+            </button>
+            <button onClick={logout} className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                Cerrar Sesión
+            </button>
+        </div>
       </div>
-      
-      {ProfileDetails}
-      {NotificationSettings}
       
       <div className="border-b border-gray-200 mb-8">
         <nav className="-mb-px flex space-x-8" aria-label="Tabs">
@@ -340,24 +480,240 @@ const ProfilePage: React.FC = () => {
         )}
         {activeTab === 'vouchers' && (
             <div className="space-y-6">
-                <h2 className="text-2xl font-bold text-secondary">Bonos Activos</h2>
-                {vouchers.map(voucher => {
-                    const service = voucher.bono_definitions.services;
-                    if (!service) return null;
-                    return (
-                        <div key={voucher.id} className="bg-white p-6 rounded-lg shadow-md flex flex-col md:flex-row justify-between items-start md:items-center">
-                            <div>
-                                <h3 className="text-xl font-bold text-secondary">{service.name}</h3>
-                                <p className="text-primary font-semibold mt-2 text-lg">
-                                    Quedan {voucher.remaining_sessions} de {voucher.total_sessions} sesiones
-                                </p>
+                <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold text-secondary">Mis Bonos</h2>
+                    <div className="flex items-center space-x-2">
+                        <span className="text-sm text-gray-500">
+                            {vouchers.length} {vouchers.length === 1 ? 'bono activo' : 'bonos activos'} • {expiredVouchers.length} {expiredVouchers.length === 1 ? 'bono agotado' : 'bonos agotados'}
+                        </span>
+                    </div>
+                </div>
+                
+                <div className="border-b border-gray-200">
+                    <nav className="-mb-px flex space-x-8" aria-label="Voucher tabs">
+                        <button
+                            onClick={() => setActiveVoucherTab('active')}
+                            className={`${activeVoucherTab === 'active' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
+                        >
+                            Activos ({vouchers.length})
+                        </button>
+                        <button
+                            onClick={() => setActiveVoucherTab('expired')}
+                            className={`${activeVoucherTab === 'expired' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
+                        >
+                            Agotados ({expiredVouchers.length})
+                        </button>
+                    </nav>
+                </div>
+                
+                {activeVoucherTab === 'active' && (
+                    <>
+                        {isLoadingVouchers ? (
+                            <div className="bg-white p-8 rounded-lg text-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+                                <p className="mt-4 text-light-text">Cargando tus bonos...</p>
                             </div>
-                            <button onClick={() => handleBookFromVoucher(voucher)} className="mt-4 md:mt-0 bg-primary text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-primary-light transition-colors">
-                                Reservar Cita
-                            </button>
-                        </div>
-                    );
-                })}
+                        ) : vouchers.length === 0 ? (
+                            <div className="bg-white p-8 rounded-lg text-center">
+                                <div className="text-gray-400 mb-4">
+                                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-lg font-semibold text-secondary mb-2">No tienes bonos activos</h3>
+                                <p className="text-light-text mb-4">Cuando compres bonos, aparecerán aquí para que puedas usarlos en tus reservas.</p>
+                                <button onClick={() => navigate('/servicios')} className="bg-primary text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-primary-light transition-colors">
+                                    Ver Servicios
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid gap-6 md:grid-cols-2">
+                                {vouchers.map(voucher => {
+                                    const services = voucher.bono_definitions.services;
+                                    if (!services || services.length === 0) return null;
+                                    
+                                    const progressPercentage = (voucher.remaining_sessions / voucher.bono_definitions.total_sessions) * 100;
+                                    const isLowSessions = voucher.remaining_sessions <= 2;
+                                    
+                                    return (
+                                        <div key={voucher.id} className="bg-white rounded-lg shadow-md overflow-hidden border border-gray-100 hover:shadow-lg transition-shadow">
+                                            <div className={`px-6 py-4 ${voucher.bono_definitions.type === 'special' ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-gradient-to-r from-blue-500 to-cyan-500'}`}>
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h3 className="text-xl font-bold text-white">{voucher.bono_definitions.name}</h3>
+                                                        <span className="inline-block mt-1 px-2 py-1 text-xs font-semibold text-white bg-white bg-opacity-20 rounded-full">
+                                                            {voucher.bono_definitions.type === 'special' ? 'Especial' : 'Regular'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-2xl font-bold text-white">{voucher.remaining_sessions}</p>
+                                                        <p className="text-xs text-white text-opacity-90">sesiones</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="p-6">
+                                                <div className="mb-4">
+                                                    <div className="flex justify-between text-sm text-gray-600 mb-1">
+                                                        <span>Progreso</span>
+                                                        <span>{voucher.remaining_sessions} de {voucher.bono_definitions.total_sessions}</span>
+                                                    </div>
+                                                    <div className="w-full bg-gray-200 rounded-full h-2">
+                                                        <div
+                                                            className={`h-2 rounded-full transition-all duration-300 ${
+                                                                isLowSessions ? 'bg-red-500' : 'bg-green-500'
+                                                            }`}
+                                                            style={{ width: `${progressPercentage}%` }}
+                                                        ></div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mb-4">
+                                                    <p className="text-sm font-semibold text-gray-700 mb-2">Servicios incluidos:</p>
+                                                    <div className="space-y-1">
+                                                        {services.map((service: Service, index: number) => (
+                                                            <div key={index} className="flex items-center text-sm text-gray-600">
+                                                                <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                                {service.name}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mb-4">
+                                                    <p className="text-xs text-gray-500">
+                                                        Comprado el {new Date(voucher.purchase_date).toLocaleDateString('es-ES', {
+                                                            year: 'numeric',
+                                                            month: 'long',
+                                                            day: 'numeric'
+                                                        })}
+                                                    </p>
+                                                </div>
+                                                
+                                                {isLowSessions && (
+                                                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                                        <div className="flex items-center">
+                                                            <svg className="w-5 h-5 text-yellow-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                                            </svg>
+                                                            <p className="text-sm text-yellow-800">
+                                                                ¡Te quedan pocas sesiones! Considera comprar otro bono.
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
+                                                <button
+                                                    onClick={() => handleBookFromVoucher(voucher)}
+                                                    className="w-full bg-primary text-white px-4 py-3 rounded-lg font-semibold hover:bg-primary-light transition-colors flex items-center justify-center space-x-2"
+                                                >
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                    </svg>
+                                                    <span>Reservar Cita</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
+                )}
+                
+                {activeVoucherTab === 'expired' && (
+                    <>
+                        {expiredVouchers.length === 0 ? (
+                            <div className="bg-white p-8 rounded-lg text-center">
+                                <div className="text-gray-400 mb-4">
+                                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-lg font-semibold text-secondary mb-2">No tienes bonos agotados</h3>
+                                <p className="text-light-text">Los bonos que agotes aparecerán aquí para tu referencia.</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-6 md:grid-cols-2">
+                                {expiredVouchers.map(voucher => {
+                                    const services = voucher.bono_definitions.services;
+                                    if (!services || services.length === 0) return null;
+                                    
+                                    return (
+                                        <div key={voucher.id} className="bg-white rounded-lg shadow-md overflow-hidden border border-gray-100 opacity-75">
+                                            <div className="px-6 py-4 bg-gradient-to-r from-gray-400 to-gray-500">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h3 className="text-xl font-bold text-white">{voucher.bono_definitions.name}</h3>
+                                                        <span className="inline-block mt-1 px-2 py-1 text-xs font-semibold text-white bg-white bg-opacity-20 rounded-full">
+                                                            {voucher.bono_definitions.type === 'special' ? 'Especial' : 'Regular'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-2xl font-bold text-white">{voucher.remaining_sessions}</p>
+                                                        <p className="text-xs text-white text-opacity-90">sesiones</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="p-6">
+                                                <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                                                    <div className="flex items-center">
+                                                        <svg className="w-5 h-5 text-gray-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                        </svg>
+                                                        <p className="text-sm text-gray-700 font-semibold">
+                                                            Bono agotado
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mb-4">
+                                                    <p className="text-sm font-semibold text-gray-700 mb-2">Servicios incluidos:</p>
+                                                    <div className="space-y-1">
+                                                        {services.map((service: Service, index: number) => (
+                                                            <div key={index} className="flex items-center text-sm text-gray-600">
+                                                                <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                                {service.name}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mb-4">
+                                                    <p className="text-xs text-gray-500">
+                                                        Comprado el {new Date(voucher.purchase_date).toLocaleDateString('es-ES', {
+                                                            year: 'numeric',
+                                                            month: 'long',
+                                                            day: 'numeric'
+                                                        })}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        Total de sesiones: {voucher.bono_definitions.total_sessions}
+                                                    </p>
+                                                </div>
+                                                
+                                                <button
+                                                    disabled
+                                                    className="w-full bg-gray-300 text-gray-500 px-4 py-3 rounded-lg font-semibold cursor-not-allowed flex items-center justify-center space-x-2"
+                                                >
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                    </svg>
+                                                    <span>Bono Agotado</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
+                )}
             </div>
         )}
       </div>
@@ -377,10 +733,25 @@ const ProfilePage: React.FC = () => {
         message={resultModalState.message}
         title={resultModalState.title}
     />
-    <SuccessToast 
+    <SuccessToast
       isOpen={showSuccessToast}
       onClose={() => setShowSuccessToast(false)}
       message="¡Tus datos han sido actualizados con éxito!"
+    />
+    <AddServicePrompt
+      isOpen={showAddServicePrompt}
+      onConfirm={handleConfirmAddService}
+      onDecline={handleDeclineAddService}
+      onCancel={handleCancelAddService}
+      selectedServices={selectedVoucherService ? [selectedVoucherService] : []}
+    />
+    <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        user={user}
+        notificationPermission={notificationPermission}
+        onSaveProfile={handleSaveProfile}
+        onRequestNotifications={requestNotificationPermission}
     />
     </>
   );

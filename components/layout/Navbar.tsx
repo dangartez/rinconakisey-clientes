@@ -30,8 +30,8 @@ const Navbar: React.FC = () => {
                          <NavLink to="/contacto" className={({ isActive }) => isActive ? 'text-primary font-semibold' : 'text-gray-600 hover:text-primary'}>Contacto</NavLink>
                     </div>
                     {isLoggedIn ? (
-                         <NavLink to="/perfil" className="hidden md:flex items-center space-x-2 text-gray-600 hover:text-primary">
-                             <UserCircleIcon className="w-6 h-6" />
+                         <NavLink to="/perfil" className="hidden md:flex items-center space-x-2 text-green-600 hover:text-green-700">
+                             <UserCircleIcon className="w-6 h-6 text-green-600" />
                              <span>Mi Perfil</span>
                          </NavLink>
                     ) : (
@@ -63,8 +63,8 @@ const Navbar: React.FC = () => {
                     </NavLink>
                     {isLoggedIn ? (
                          <NavLink to="/perfil" className={({ isActive }) => isActive ? activeLinkClasses : linkClasses}>
-                            <UserCircleIcon className="w-7 h-7 mb-1" />
-                            <span className="text-xs">Perfil</span>
+                            <UserCircleIcon className="w-7 h-7 mb-1 text-green-600" />
+                            <span className="text-xs text-green-600">Perfil</span>
                         </NavLink>
                     ) : (
                         <button onClick={() => setLoginModalOpen(true)} className={linkClasses}>

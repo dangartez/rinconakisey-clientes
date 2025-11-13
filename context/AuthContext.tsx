@@ -40,24 +40,47 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const fetchUserProfile = async (supabaseUser: User) => {
     console.log('Fetching profile for user ID:', supabaseUser.id);
 
-    const { data, error } = await supabase
-      .from('clients')
-      .select('id, user_id, full_name, phone, email, nickname, created_at, claim_code')
-      .eq('user_id', supabaseUser.id);
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, user_id, full_name, phone, email, nickname, created_at, claim_code')
+        .eq('user_id', supabaseUser.id);
 
-    console.log('Supabase response:', { data, error });
+      console.log('Supabase response:', { data, error });
 
-    if (error) {
-      console.error('Error fetching user profile:', error);
-      setUser(null);
-    } else {
-      if (data && data.length > 0) {
-        console.log('Profile found:', data[0]);
-        setUser(data[0] as Client);
-      } else {
-        console.log('No profile found for this user ID.');
+      if (error) {
+        console.error('Error fetching user profile:', error);
         setUser(null);
+      } else {
+        if (data && data.length > 0) {
+          console.log('Profile found:', data[0]);
+          setUser(data[0] as Client);
+        } else {
+          console.log('No profile found for this user ID. Creating a new client profile...');
+          // Crear automáticamente un perfil de cliente si no existe
+          const { data: newClientData, error: insertError } = await supabase
+            .from('clients')
+            .insert({
+              user_id: supabaseUser.id,
+              full_name: supabaseUser.user_metadata?.full_name || supabaseUser.email?.split('@')[0] || 'Usuario',
+              email: supabaseUser.email,
+              phone: supabaseUser.phone || null
+            })
+            .select()
+            .single();
+
+          if (insertError) {
+            console.error('Error creating client profile:', insertError);
+            setUser(null);
+          } else {
+            console.log('New client profile created:', newClientData);
+            setUser(newClientData as Client);
+          }
+        }
       }
+    } catch (error) {
+      console.error('Unexpected error in fetchUserProfile:', error);
+      setUser(null);
     }
   };
 
@@ -121,12 +144,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updateUser = async (details: Partial<Client>) => {
     if (!user?.id) return;
 
-    // Map frontend 'name' to backend 'full_name'
-    const { name, ...otherDetails } = details;
-    const updateData: { [key: string]: any } = { ...otherDetails };
-    if (name) {
-      updateData.full_name = name;
-    }
+    // Map frontend 'full_name' to backend 'full_name' (they're the same now)
+    const updateData: { [key: string]: any } = { ...details };
 
     const { error } = await supabase
       .from('clients')
@@ -140,7 +159,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Refresh user profile from DB
     if (session?.user) {
-        await fetchUserProfile(session.user);
+        try {
+            await fetchUserProfile(session.user);
+        } catch (error) {
+            console.error('Error refreshing user profile:', error);
+        }
     }
   };
 

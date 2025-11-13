@@ -6,9 +6,10 @@ import { useSettings } from '../context/SettingsContext';
 import { Service, Promotion } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import ServiceConfirmationModal from '../components/booking/ServiceConfirmationModal';
+import PromotionDetailModal from '../components/promotions/PromotionDetailModal';
 
 const HomePage: React.FC = () => {
-    const { setService } = useBooking();
+    const { addService, resetBooking } = useBooking();
     const navigate = useNavigate();
     const { settings, loading: settingsLoading } = useSettings();
 
@@ -17,8 +18,11 @@ const HomePage: React.FC = () => {
     const [pageLoading, setPageLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [showConfirmationModal, setShowConfirmationModal] = useState(false);
-    const [selectedService, setSelectedService] = useState<Service | null>(null);
+    const [showSvcConfirmModal, setShowSvcConfirmModal] = useState(false);
+    const [servicesToBook, setServicesToBook] = useState<Service[] | null>(null);
+
+    const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
+    const [isPromotionModalOpen, setIsPromotionModalOpen] = useState(false);
 
     useEffect(() => {
         const fetchPageData = async () => {
@@ -26,9 +30,8 @@ const HomePage: React.FC = () => {
 
             setPageLoading(true);
             try {
-                // Fetch promotions and featured services in parallel
                 const [promotionsRes, servicesRes] = await Promise.all([
-                    supabase.from('promotions').select('*').eq('is_active', true),
+                    supabase.rpc('get_promotions_with_services'),
                     supabase.from('services').select('*').in('id', settings.home_featured_services_ids || [])
                 ]);
 
@@ -52,32 +55,57 @@ const HomePage: React.FC = () => {
     }, [settings, settingsLoading]);
 
     const handleBookService = (service: Service) => {
-        setSelectedService(service);
-        setShowConfirmationModal(true);
+        setServicesToBook([service]);
+        setShowSvcConfirmModal(true);
+    };
+
+    const handlePromotionClick = (promotion: Promotion) => {
+        setSelectedPromotion(promotion);
+        setIsPromotionModalOpen(true);
+    };
+
+    const handleBookPromotion = (promotion: Promotion) => {
+        if (!promotion.services || promotion.services.length === 0) {
+            alert('Esta promoción no tiene servicios asociados para reservar.');
+            return;
+        }
+        
+        const pricePerService = promotion.promo_price / promotion.services.length;
+        const servicesWithPromoPrice = promotion.services.map(service => ({
+            ...service,
+            price: pricePerService,
+        }));
+
+        setServicesToBook(servicesWithPromoPrice);
+        setIsPromotionModalOpen(false); // Close detail modal
+        setShowSvcConfirmModal(true); // Open confirmation modal
     };
 
     const handleConfirmService = () => {
-        if (!selectedService) return;
-        setService(selectedService);
-        setShowConfirmationModal(false);
+        if (!servicesToBook) return;
+        resetBooking();
+        servicesToBook.forEach(service => addService(service));
+        setShowSvcConfirmModal(false);
         navigate('/reservar');
     };
 
     const handleDeclineService = () => {
-        if (!selectedService) return;
-        setService(selectedService);
-        setShowConfirmationModal(false);
+        if (!servicesToBook) return;
+        resetBooking();
+        servicesToBook.forEach(service => addService(service));
+        setShowSvcConfirmModal(false);
         navigate('/reservar?skipToStep=2');
     };
 
     const handleCancelSelection = () => {
-        setShowConfirmationModal(false);
+        setShowSvcConfirmModal(false);
+        setServicesToBook(null);
     };
 
     const isLoading = settingsLoading || pageLoading;
 
     if (isLoading) {
-        return <div>Cargando...</div>; // Or a proper skeleton loader
+        return <div>Cargando...</div>;
     }
 
     if (error) {
@@ -109,11 +137,17 @@ const HomePage: React.FC = () => {
           <h2 className="text-3xl font-bold text-center text-secondary mb-8">Promociones Destacadas</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {promotions.map((promo) => (
-              <div key={promo.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col md:flex-row">
-                  <img src={promo.image_url || 'https://picsum.photos/seed/promo/300/200'} alt={promo.title} className="w-full md:w-1/3 h-48 md:h-full object-cover" />
-                  <div className="p-6 flex flex-col justify-center">
+              <div 
+                key={promo.id} 
+                className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col cursor-pointer hover:shadow-xl transition-shadow duration-300"
+                onClick={() => handlePromotionClick(promo)}
+              >
+                  <img src={promo.image_url || 'https://picsum.photos/seed/promo/300/200'} alt={promo.title} className="w-full h-48 object-cover" />
+                  <div className="p-6 flex flex-col flex-1">
                       <h3 className="text-2xl font-bold text-secondary">{promo.title}</h3>
-                      <p className="mt-2 text-light-text">{promo.description}</p>
+                      <p className="mt-2 text-light-text flex-grow">
+                        {promo.description.substring(0, 100)}{promo.description.length > 100 ? '...' : ''}
+                      </p>
                       <div className="mt-4 flex items-baseline space-x-2">
                           <span className="text-3xl font-bold text-primary">{promo.promo_price}€</span>
                           {promo.original_price && <span className="text-lg text-gray-400 line-through">{promo.original_price}€</span>}
@@ -156,11 +190,18 @@ const HomePage: React.FC = () => {
       )}
 
       <ServiceConfirmationModal
-        isOpen={showConfirmationModal}
-        service={selectedService}
+        isOpen={showSvcConfirmModal}
+        services={servicesToBook}
         onConfirm={handleConfirmService}
         onDecline={handleDeclineService}
         onCancel={handleCancelSelection}
+      />
+
+      <PromotionDetailModal
+        isOpen={isPromotionModalOpen}
+        onClose={() => setIsPromotionModalOpen(false)}
+        promotion={selectedPromotion}
+        onBook={handleBookPromotion}
       />
     </div>
   );

@@ -57,7 +57,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             </div>
              <div>
                 <h3 className="font-semibold text-sm text-light-text">Total</h3>
-                <p className="text-lg font-bold text-primary">{bookingDetails.price}€</p>
+                <p className="text-lg font-bold text-primary">{isNaN(parseFloat(bookingDetails.price.toString())) ? '0' : bookingDetails.price}€</p>
             </div>
         </div>
 
