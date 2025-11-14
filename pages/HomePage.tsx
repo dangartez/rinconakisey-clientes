@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useBooking } from '../context/BookingContext';
-import { useNavigate } from 'react-router-dom';
 import { useSettings } from '../context/SettingsContext';
+import { useAuth } from '../context/AuthContext';
 import { Service, Promotion } from '../types';
 import { supabase } from '../lib/supabaseClient';
-import ServiceConfirmationModal from '../components/booking/ServiceConfirmationModal';
+import DuoBookingModal from '../components/booking/DuoBookingModal';
+import BookingResultModal from '../components/booking/BookingResultModal'; // To show booking result
 import PromotionDetailModal from '../components/promotions/PromotionDetailModal';
+import ServiceConfirmationModal from '../components/booking/ServiceConfirmationModal';
 
 const HomePage: React.FC = () => {
     const { addService, resetBooking } = useBooking();
     const navigate = useNavigate();
+    const { user } = useAuth();
     const { settings, loading: settingsLoading } = useSettings();
 
     const [promotions, setPromotions] = useState<Promotion[]>([]);
@@ -18,11 +21,19 @@ const HomePage: React.FC = () => {
     const [pageLoading, setPageLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    // State for Modals
+    const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
+    const [isPromotionModalOpen, setIsPromotionModalOpen] = useState(false);
     const [showSvcConfirmModal, setShowSvcConfirmModal] = useState(false);
     const [servicesToBook, setServicesToBook] = useState<Service[] | null>(null);
 
-    const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
-    const [isPromotionModalOpen, setIsPromotionModalOpen] = useState(false);
+    // State for Duo Booking Flow
+    const [isDuoModalOpen, setIsDuoModalOpen] = useState(false);
+    const [selectedDuoService, setSelectedDuoService] = useState<Service | null>(null);
+    const [promotionForDuo, setPromotionForDuo] = useState<Promotion | null>(null);
+    
+    // State for booking result notification
+    const [bookingResult, setBookingResult] = useState<{ isOpen: boolean; status: 'success' | 'error'; message: string; }>({ isOpen: false, status: 'success', message: '' });
 
     useEffect(() => {
         const fetchPageData = async () => {
@@ -59,47 +70,102 @@ const HomePage: React.FC = () => {
         setShowSvcConfirmModal(true);
     };
 
+    // Step 1: User clicks on a promotion card, open the detail modal
     const handlePromotionClick = (promotion: Promotion) => {
         setSelectedPromotion(promotion);
         setIsPromotionModalOpen(true);
     };
 
-    const handleBookPromotion = (promotion: Promotion) => {
-        if (!promotion.services || promotion.services.length === 0) {
-            alert('Esta promoción no tiene servicios asociados para reservar.');
+
+    // Step 2: User clicks "Book" inside the detail modal, this function is called
+    const handleBookFromDetail = (promotion: Promotion) => {
+        setIsPromotionModalOpen(false); // Close the detail modal first
+
+        const mainService = promotion.services?.[0];
+        if (!mainService) {
+            alert('Esta promoción no tiene un servicio válido asociado.');
             return;
         }
-        
-        const pricePerService = promotion.promo_price / promotion.services.length;
-        const servicesWithPromoPrice = promotion.services.map(service => ({
-            ...service,
-            price: pricePerService,
-        }));
 
-        setServicesToBook(servicesWithPromoPrice);
-        setIsPromotionModalOpen(false); // Close detail modal
-        setShowSvcConfirmModal(true); // Open confirmation modal
+        const isDuo = mainService.required_professionals > 1;
+
+        if (isDuo) {
+            // Open the Duo booking modal
+            const serviceWithPromoPrice = { ...mainService, price: promotion.promo_price };
+            setSelectedDuoService(serviceWithPromoPrice);
+            setPromotionForDuo(promotion);
+            setIsDuoModalOpen(true);
+        } else {
+            // For standard promotions, open the confirmation modal
+            const pricePerService = promotion.promo_price / (promotion.services?.length || 1);
+            const servicesWithPromoPrice = (promotion.services || []).map(service => ({
+                ...service,
+                price: pricePerService,
+            }));
+            setServicesToBook(servicesWithPromoPrice);
+            setShowSvcConfirmModal(true);
+        }
     };
 
     const handleConfirmService = () => {
         if (!servicesToBook) return;
-        resetBooking();
-        servicesToBook.forEach(service => addService(service));
+        const serviceIds = servicesToBook.map(s => s.id).join(',');
         setShowSvcConfirmModal(false);
-        navigate('/reservar');
+        
+        let url = `/reservar?serviceIds=${serviceIds}`;
+        if (selectedPromotion) {
+            url += `&promotion_id=${selectedPromotion.id}`;
+        }
+        navigate(url);
     };
 
     const handleDeclineService = () => {
         if (!servicesToBook) return;
-        resetBooking();
-        servicesToBook.forEach(service => addService(service));
+        const serviceIds = servicesToBook.map(s => s.id).join(',');
         setShowSvcConfirmModal(false);
-        navigate('/reservar?skipToStep=2');
+
+        let url = `/reservar?skipToStep=2&serviceIds=${serviceIds}`;
+        if (selectedPromotion) {
+            url += `&promotion_id=${selectedPromotion.id}`;
+        }
+        navigate(url);
     };
 
     const handleCancelSelection = () => {
         setShowSvcConfirmModal(false);
         setServicesToBook(null);
+        setSelectedPromotion(null);
+    };
+
+    const handleDuoSlotSelected = async (slot: string) => {
+        if (!user) {
+            setBookingResult({ isOpen: true, status: 'error', message: 'Debes iniciar sesión para reservar.' });
+            return;
+        }
+        if (!selectedDuoService || !promotionForDuo) return;
+
+        setBookingResult({ isOpen: true, status: 'success', message: 'Procesando tu reserva...' });
+
+        const { data, error } = await supabase.rpc('create_duo_appointment_with_promo_v7', {
+            p_client_id: user.id,
+            p_service_id: selectedDuoService.id,
+            p_start_time: slot,
+            p_promotion_id: promotionForDuo.id,
+            p_final_price: promotionForDuo.promo_price
+        });
+
+        if (error || !data || !data[0].success) {
+            setBookingResult({ isOpen: true, status: 'error', message: data?.[0]?.message || 'No se pudo crear la cita. Inténtalo de nuevo.' });
+        } else {
+            setBookingResult({ isOpen: true, status: 'success', message: '¡Tu cita ha sido confirmada! Gracias por tu reserva.' });
+        }
+    };
+    
+    const handleCloseResultModal = () => {
+        setBookingResult({ isOpen: false, status: 'success', message: '' });
+        if (bookingResult.status === 'success') {
+            navigate('/perfil');
+        }
     };
 
     const isLoading = settingsLoading || pageLoading;
@@ -189,19 +255,37 @@ const HomePage: React.FC = () => {
         </section>
       )}
 
+      {isDuoModalOpen && (
+        <DuoBookingModal
+            isOpen={isDuoModalOpen}
+            onClose={() => setIsDuoModalOpen(false)}
+            service={selectedDuoService}
+            promotionContext={promotionForDuo}
+            onSlotSelected={handleDuoSlotSelected}
+        />
+      )}
+
+      <PromotionDetailModal
+        isOpen={isPromotionModalOpen}
+        onClose={() => setIsPromotionModalOpen(false)}
+        promotion={selectedPromotion}
+        onBook={handleBookFromDetail}
+      />
+
+      <BookingResultModal
+        isOpen={bookingResult.isOpen}
+        status={bookingResult.status}
+        message={bookingResult.message}
+        onClose={handleCloseResultModal}
+      />
+
+
       <ServiceConfirmationModal
         isOpen={showSvcConfirmModal}
         services={servicesToBook}
         onConfirm={handleConfirmService}
         onDecline={handleDeclineService}
         onCancel={handleCancelSelection}
-      />
-
-      <PromotionDetailModal
-        isOpen={isPromotionModalOpen}
-        onClose={() => setIsPromotionModalOpen(false)}
-        promotion={selectedPromotion}
-        onBook={handleBookPromotion}
       />
     </div>
   );

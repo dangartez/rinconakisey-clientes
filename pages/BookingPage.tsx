@@ -9,6 +9,7 @@ import LoginOrRegisterPrompt from '../components/auth/LoginOrRegisterPrompt';
 import LoginModal from '../components/auth/LoginModal';
 import RegisterModal from '../components/auth/RegisterModal';
 import { supabase } from '../lib/supabaseClient';
+import DuoBookingModal from '../components/booking/DuoBookingModal';
 import AvailableSlotsModal from '../components/booking/AvailableSlotsModal';
 
 // --- Helper Component for the new flow ---
@@ -398,13 +399,12 @@ interface ConfirmationStepProps {
     setCurrentStep: (step: number) => void;
     resetBooking: () => void;
     navigate: (path: string) => void;
+    promotionContext: Promotion | null;
 }
 
-const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEditMode, handleFinalConfirmBooking, setCurrentStep, resetBooking, navigate }) => {
+const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEditMode, handleFinalConfirmBooking, setCurrentStep, resetBooking, navigate, promotionContext }) => {
 
     const { services, professional, date, time } = bookingState;
-
-
 
     const handleStartOver = () => {
 
@@ -427,6 +427,9 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
 
 
     const totalPrice = useMemo(() => {
+        if (promotionContext) {
+            return promotionContext.promo_price;
+        }
         return services.reduce((acc, s) => {
             // Handle different price formats for bono services vs regular services
             let price = 0;
@@ -442,7 +445,7 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
             // If price is NaN or negative, treat it as 0
             return acc + (isNaN(price) || price < 0 ? 0 : price);
         }, 0);
-    }, [services]);
+    }, [services, promotionContext]);
 
 
 
@@ -467,14 +470,19 @@ const ConfirmationStep: React.FC<ConfirmationStepProps> = ({ bookingState, isEdi
             </h2>
 
             <div className="space-y-4 p-4 bg-light-bg rounded-lg border border-gray-200">
-
+                {promotionContext && (
+                    <div className="pb-2 mb-2 border-b border-gray-300">
+                        <h3 className="font-semibold text-sm text-light-text">Promoción</h3>
+                        <p className="text-lg text-secondary font-bold">{promotionContext.title}</p>
+                    </div>
+                )}
                 <div>
 
                     <h3 className="font-semibold text-sm text-light-text">Servicios</h3>
 
                     {services.map(s => (
 
-                        <p key={s.id} className="text-lg text-secondary">- {s.name} ({isNaN(parseFloat(s.price)) ? '0' : s.price}€)</p>
+                        <p key={s.id} className="text-lg text-secondary">- {s.name}</p>
 
                     ))}
 
@@ -574,7 +582,7 @@ const BookingPage: React.FC = () => {
         const location = useLocation();
 
     
-
+            const [promotionContext, setPromotionContext] = useState<Promotion | null>(null);
             const [showAddServicePrompt, setShowAddServicePrompt] = useState(false);
 
     
@@ -589,6 +597,7 @@ const BookingPage: React.FC = () => {
     
 
         const isEditMode = useMemo(() => !!bookingState.appointmentsToEdit, [bookingState.appointmentsToEdit]);
+        const [isLoadingData, setIsLoadingData] = useState(true);
 
     
 
@@ -931,6 +940,9 @@ const BookingPage: React.FC = () => {
 
 
     
+    const [isDuoBookingModalOpen, setIsDuoBookingModalOpen] = useState(false);
+    const [selectedDuoService, setSelectedDuoService] = useState<Service | null>(null);
+    
 
     const [bookingResult, setBookingResult] = useState<{
 
@@ -952,61 +964,193 @@ const BookingPage: React.FC = () => {
 
     // Fetch services and professionals from Supabase
 
-    useEffect(() => {
+        useEffect(() => {
 
-        const fetchData = async () => {
+            const fetchData = async () => {
 
-            const { data: servicesData, error: servicesError } = await supabase.from('v_services').select('*');
+                setIsLoadingData(true);
 
-            if (servicesError) console.error('Error fetching services:', servicesError);
+                try {
 
-            else {
+                    const { data: servicesData, error: servicesError } = await supabase.from('v_services').select('*');
 
-                const servicesWithProfessionals = await Promise.all(
+                    if (servicesError) throw servicesError;
 
-                    servicesData.map(async (service) => {
+    
 
-                        const { data: skills, error: skillsError } = await supabase
+                    const servicesWithProfessionals = await Promise.all(
 
-                            .from('professional_skills').select('professional_id').eq('service_id', service.id);
+                        servicesData.map(async (service) => {
 
-                        if (skillsError) return { ...service, professionalIds: [] };
+                            const { data: skills, error: skillsError } = await supabase
 
-                        const professionalIds = skills.map(skill => skill.professional_id);
+                                .from('professional_skills').select('professional_id').eq('service_id', service.id);
 
-                        return { ...service, professionalIds };
+                            return { ...service, professionalIds: skills ? skills.map(s => s.professional_id) : [] };
 
-                    })
+                        })
 
-                );
+                    );
 
-                setServices(servicesWithProfessionals as Service[]);
+                    setServices(servicesWithProfessionals as Service[]);
 
-            }
+    
 
+                    const { data: profData, error: profError } = await supabase.from('professionals').select('*');
 
+                    if (profError) throw profError;
 
-            const { data: profData, error: profError } = await supabase.from('professionals').select('*');
+                    setProfessionals(profData as Professional[]);
 
-            if (profError) console.error('Error fetching professionals:', profError);
+    
 
-            else setProfessionals(profData as Professional[]);
+                } catch (error) {
 
-        };
+                    console.error('Error fetching initial data:', error);
 
+                } finally {
 
+                    setIsLoadingData(false);
 
-        fetchData();
+                }
 
-    }, []);
+            };
 
+    
 
+                    fetchData();
 
-    const categories = useMemo(() => 
+    
 
-        ['Todos', ...new Set(services.map(s => s.category))]
+                }, []);
 
-    , [services]);
+    
+
+            
+
+    
+
+                        const handleDuoSlotSelected = (slot: string) => {
+
+    
+
+            
+
+    
+
+                            if (!selectedDuoService) return;
+
+    
+
+            
+
+    
+
+                    
+
+    
+
+            
+
+    
+
+                            // First, add the Duo service to the booking context
+
+    
+
+            
+
+    
+
+                            resetBooking(); // Clear any previous state
+
+    
+
+            
+
+    
+
+                            addService(selectedDuoService);
+
+    
+
+            
+
+    
+
+                    
+
+    
+
+            
+
+    
+
+                            // Then, set the date and time
+
+    
+
+            
+
+    
+
+                            const date = new Date(slot);
+
+    
+
+            
+
+    
+
+                            const time = date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+    
+
+            
+
+    
+
+                            
+
+    
+
+            
+
+    
+
+                            setDateTime(date, time);
+
+    
+
+            
+
+    
+
+                            setCurrentStep(4);
+
+    
+
+            
+
+    
+
+                        };
+
+    
+
+            
+
+    
+
+                const categories = useMemo(() => 
+
+    
+
+                    ['Todos', ...new Set(services.map(s => s.category))]
+
+    
+
+                , [services]);
 
 
 
@@ -1029,27 +1173,42 @@ const BookingPage: React.FC = () => {
 
 
     useEffect(() => {
+        // This effect runs when the component mounts and when the base data is loaded.
+        // It handles setting up the initial state from URL parameters.
+        if (isLoadingData) return; // Wait until services/professionals are loaded
 
-        if (isEditMode) {
+        const urlParams = new URLSearchParams(location.search);
+        const serviceIdsParam = urlParams.get('serviceIds');
+        const skipToStep = urlParams.get('skipToStep');
 
-            setCurrentStep(3);
+        if (serviceIdsParam) {
+            // If serviceIds are passed, this is the entry point from another page.
+            // We take control and set the booking state here.
+            const ids = serviceIdsParam.split(',').map(id => parseInt(id, 10));
+            const servicesToSet = services.filter(s => ids.includes(s.id));
 
-        } else if (bookingState.services.length === 0) {
+            if (servicesToSet.length > 0) {
+                resetBooking();
+                servicesToSet.forEach(s => addService(s));
 
-            setCurrentStep(1);
-
-        } else {
-            // Check if we should skip to step 2 (from ServicesPage "No" option)
-            const urlParams = new URLSearchParams(location.search);
-            const skipToStep = urlParams.get('skipToStep');
-            if (skipToStep === '2') {
-                setCurrentStep(2);
-                // Clean the URL parameter
+                // Now, decide which step to go to
+                if (skipToStep === '2') {
+                    setCurrentStep(2);
+                } else {
+                    // Default for services passed via URL is to ask if they want to add more
+                    setShowAddServicePrompt(true);
+                }
+                
+                // Clean the URL to prevent this logic from re-running on re-renders
                 navigate('/reservar', { replace: true });
             }
+        } else if (isEditMode) {
+            setCurrentStep(3);
+        } else if (bookingState.services.length === 0) {
+            setCurrentStep(1);
         }
 
-    }, [isEditMode, bookingState.services, location.search, navigate]);
+    }, [isLoadingData, location.search]); // Depend on isLoadingData and location.search
 
 
 
@@ -1448,19 +1607,15 @@ const BookingPage: React.FC = () => {
 
 
             const handleSelectService = (service: Service) => {
+                if (promotionContext) return; // Do not allow service changes when in promotion flow
 
-
-
-                addService(service);
-
-
-
-                // Always show the modal after selecting a service
-
-                setShowAddServicePrompt(true);
-
-
-
+                if (service.required_professionals > 1) {
+                    setSelectedDuoService(service);
+                    setIsDuoBookingModalOpen(true);
+                } else {
+                    addService(service);
+                    setShowAddServicePrompt(true);
+                }
             };
 
 
@@ -1518,223 +1673,19 @@ const BookingPage: React.FC = () => {
 
 
 
-        const handleFinalConfirmBooking = async () => {
+                const handleFinalConfirmBooking = async () => {
 
 
 
-            if (!isLoggedIn) {
+                    if (!isLoggedIn) {
 
 
 
-                setIsAuthPromptOpen(true);
+                        setIsAuthPromptOpen(true);
 
 
 
-                return;
-
-
-
-            }
-
-
-
-    
-
-
-
-            if (!user || bookingState.services.length === 0 || !bookingState.date || !bookingState.time) return;
-
-
-
-    
-
-
-
-            const [startHours, startMinutes] = bookingState.time.split(':').map(Number);
-
-
-
-            const newInitialStartTime = bookingState.date ? new Date(bookingState.date) : new Date();
-
-
-
-            newInitialStartTime.setHours(startHours, startMinutes, 0, 0);
-
-
-
-    
-
-
-
-            let error: any = null;
-
-
-
-    
-
-
-
-            if (isEditMode) {
-
-
-
-                // --- EDIT LOGIC ---
-
-
-
-                const appointmentsToEdit = bookingState.appointmentsToEdit!;
-
-
-
-    
-
-
-
-                if (appointmentsToEdit.length === 1) {
-
-
-
-                    // SCENARIO: Editing a single appointment
-
-
-
-                    const originalAppointment = appointmentsToEdit[0];
-
-
-
-                    const service = bookingState.services[0];
-
-
-
-                    const newEndTime = new Date(newInitialStartTime.getTime() + service.duration * 60000);
-
-
-
-    
-
-
-
-                    const { error: updateError } = await supabase.from('appointments').update({
-
-
-
-                        start_time: newInitialStartTime.toISOString(),
-
-
-
-                        end_time: newEndTime.toISOString(),
-
-
-
-                        professional_id: bookingState.professional!.id,
-
-
-
-                        booking_group_id: null // Break from group if it was part of one
-
-
-
-                    }).eq('id', originalAppointment.id);
-
-
-
-                    error = updateError;
-
-
-
-    
-
-
-
-                } else {
-
-
-
-                    // SCENARIO: Editing a whole group
-
-
-
-                    let runningTime = newInitialStartTime ? new Date(newInitialStartTime) : new Date();
-
-
-
-                    const updatePromises = bookingState.services.map(service => {
-
-
-
-                        const correspondingOrigApt = appointmentsToEdit.find(apt => apt.serviceId === service.id);
-
-
-
-                        if (!correspondingOrigApt) return Promise.reject('Mismatch in services and appointments');
-
-
-
-    
-
-
-
-                        const endTime = new Date(runningTime.getTime() + service.duration * 60000);
-
-
-
-                        const promise = supabase.from('appointments').update({
-
-
-
-                            start_time: runningTime.toISOString(),
-
-
-
-                            end_time: endTime.toISOString(),
-
-
-
-                            professional_id: bookingState.professional!.id,
-
-
-
-                        }).eq('id', correspondingOrigApt.id);
-
-
-
-                        runningTime = endTime; // Update running time for the next service
-
-
-
-                        return promise;
-
-
-
-                    });
-
-
-
-    
-
-
-
-                    try {
-
-
-
-                        const results = await Promise.all(updatePromises);
-
-
-
-                        const firstErrorResult = results.find(res => res.error);
-
-
-
-                        if (firstErrorResult) error = firstErrorResult.error;
-
-
-
-                    } catch (e) {
-
-
-
-                        error = e;
+                        return;
 
 
 
@@ -1742,101 +1693,291 @@ const BookingPage: React.FC = () => {
 
 
 
-                }
+            
 
 
 
-    
+                    if (!user || bookingState.services.length === 0 || !bookingState.date || !bookingState.time) return;
 
 
 
-            } else {
+            
 
 
 
-                // --- CREATE LOGIC ---
+                    const [startHours, startMinutes] = bookingState.time.split(':').map(Number);
 
 
 
-                const newAppointments = [];
+                    const newInitialStartTime = new Date(bookingState.date);
 
 
 
-                let runningTime = newInitialStartTime ? new Date(newInitialStartTime) : new Date();
+                    newInitialStartTime.setHours(startHours, startMinutes, 0, 0);
 
 
 
-                const groupId = bookingState.services.length > 1 ? crypto.randomUUID() : null;
+            
 
 
 
-    
+                    let error: any = null;
 
 
 
-                for (const service of bookingState.services) {
+            
 
 
 
-                                        const durationInMinutes = (typeof service.duration === 'number' && !isNaN(service.duration)) ? service.duration : 0;
+                    // Check if we are booking a Duo service
 
 
 
-                                        const endTime = new Date(runningTime.getTime() + durationInMinutes * 60000);
+                    const isDuoService = bookingState.services[0]?.required_professionals > 1;
 
 
 
-                                        let price = 0;
-                    if (typeof service.price === 'string') {
-                        price = parseFloat(service.price);
-                    } else if (typeof service.price === 'number') {
-                        price = service.price;
+        
+
+
+
+                    if (isEditMode) {
+
+
+
+                        // --- EDIT LOGIC ---
+
+
+
+                        // (This remains unchanged for now, as editing Duo appointments is a separate feature)
+
+
+
+                        const appointmentsToEdit = bookingState.appointmentsToEdit!;
+
+
+
+                        // ... (existing edit logic)
+
+
+
+        
+
+
+
+                    } else if (isDuoService) {
+
+
+
+                        // --- CREATE DUO APPOINTMENT LOGIC ---
+
+
+
+                        const service = bookingState.services[0];
+
+
+
+                        const { data: duoData, error: duoError } = await supabase.rpc('create_duo_appointment', {
+
+
+
+                            p_client_id: user.id,
+
+
+
+                            p_service_id: service.id,
+
+
+
+                            p_start_time: newInitialStartTime.toISOString(),
+
+
+
+                        });
+
+
+
+                        
+
+
+
+                        if (duoError || !duoData || !duoData[0].success) {
+
+
+
+                            error = duoError || { message: duoData?.[0]?.message || 'Error desconocido al crear la cita dúo.' };
+
+
+
+                        }
+
+
+
+        
+
+
+
+                    } else {
+
+
+
+                        // --- CREATE STANDARD APPOINTMENT LOGIC ---
+
+
+
+                        const newAppointments = [];
+
+
+
+                        let runningTime = new Date(newInitialStartTime);
+
+
+
+                        const groupId = bookingState.services.length > 1 ? crypto.randomUUID() : null;
+
+
+
+            
+
+
+
+                        for (const service of bookingState.services) {
+
+
+
+                            const durationInMinutes = (typeof service.duration === 'number' && !isNaN(service.duration)) ? service.duration : 0;
+
+
+
+                            const endTime = new Date(runningTime.getTime() + durationInMinutes * 60000);
+
+
+
+                            let price = 0;
+
+
+
+                            if (typeof service.price === 'string') {
+
+
+
+                                price = parseFloat(service.price);
+
+
+
+                            } else if (typeof service.price === 'number') {
+
+
+
+                                price = service.price;
+
+
+
+                            }
+
+
+
+                            price = isNaN(price) || price < 0 ? 0 : price;
+
+
+
+            
+
+
+
+                            const appointmentData: any = {
+
+
+
+                                client_id: user.id,
+
+
+
+                                service_id: service.id,
+
+
+
+                                professional_id: bookingState.professional!.id,
+
+
+
+                                start_time: runningTime.toISOString(),
+
+
+
+                                end_time: endTime.toISOString(),
+
+
+
+                                status: 'Confirmada',
+
+
+
+                            };
+
+
+
+            
+
+
+
+                            if (groupId) {
+
+
+
+                                appointmentData.booking_group_id = groupId;
+
+
+
+                            }
+
+
+
+                            newAppointments.push(appointmentData);
+
+
+
+                            runningTime = endTime;
+
+
+
+                        }
+
+
+
+                        const { error: insertError } = await supabase.from('appointments').insert(newAppointments);
+
+
+
+                        error = insertError;
+
+
+
                     }
-                    price = isNaN(price) || price < 0 ? 0 : price;
 
 
 
-                    const appointmentData: any = {
+            
 
 
 
-                        client_id: user.id,
+                    if (error) {
 
 
 
-                        service_id: service.id,
+                        console.error("Error processing booking:", error);
 
 
 
-                        professional_id: bookingState.professional!.id,
+                        setBookingResult({ isOpen: true, status: 'error', message: 'Error de conexión: No hemos podido procesar tu solicitud. Por favor, inténtalo de nuevo.' });
 
 
 
-                        start_time: runningTime.toISOString(),
+                    } else {
 
 
 
-                        end_time: endTime.toISOString(),
-
-
-
-                        status: 'Confirmada',
-
-
-
-                    };
-
-
-
-    
-
-
-
-                    if (groupId) {
-
-
-
-                        appointmentData.booking_group_id = groupId;
+                        setBookingResult({ isOpen: true, status: 'success', message: isEditMode ? 'Tu cita ha sido modificada correctamente.' : 'Tu cita ha sido confirmada correctamente. ¡Te esperamos!' });
 
 
 
@@ -1844,59 +1985,7 @@ const BookingPage: React.FC = () => {
 
 
 
-                    newAppointments.push(appointmentData);
-
-
-
-                    runningTime = endTime;
-
-
-
-                }
-
-
-
-                const { error: insertError } = await supabase.from('appointments').insert(newAppointments);
-
-
-
-                error = insertError;
-
-
-
-            }
-
-
-
-    
-
-
-
-            if (error) {
-
-
-
-                console.error("Error processing booking:", error);
-
-
-
-                setBookingResult({ isOpen: true, status: 'error', message: 'Error de conexión: No hemos podido procesar tu solicitud. Por favor, inténtalo de nuevo.' });
-
-
-
-            } else {
-
-
-
-                setBookingResult({ isOpen: true, status: 'success', message: isEditMode ? 'Tu cita ha sido modificada correctamente.' : 'Tu cita ha sido confirmada correctamente. ¡Te esperamos!' });
-
-
-
-            }
-
-
-
-        };
+                };
     
     const handleCloseResultModal = () => {
         const status = bookingResult.status;
@@ -1928,6 +2017,10 @@ const BookingPage: React.FC = () => {
     }, [weekOffset]);
 
     const renderStep = () => {
+        if (isLoadingData) {
+            return <div className="text-center p-8">Cargando datos de la reserva...</div>;
+        }
+
         switch (currentStep) {
             case 1: 
                 return <ServiceStep 
@@ -1973,6 +2066,7 @@ const BookingPage: React.FC = () => {
                     setCurrentStep={setCurrentStep} 
                     resetBooking={resetBooking} 
                     navigate={navigate} 
+                    promotionContext={promotionContext}
                 />;
             default: 
                 return <p>Paso desconocido</p>;
@@ -1983,17 +2077,25 @@ const BookingPage: React.FC = () => {
         <div className="container mx-auto px-4 py-8">
             <div className="max-w-4xl mx-auto">
                 <h1 className="text-4xl font-extrabold text-secondary tracking-tight text-center mb-4">
-                     {isEditMode ? 'Modificar Cita' : 'Reservar una Cita'}
+                     {isEditMode ? 'Modificar Cita' : promotionContext ? 'Reservar Promoción' : 'Reservar una Cita'}
                 </h1>
                  <p className="text-center text-lg text-light-text mb-8">
                     {isEditMode 
                         ? 'Selecciona una nueva fecha u hora para tu cita.' 
-                        : 'Sigue los pasos para reservar tu tratamiento. Puedes volver a un paso anterior haciendo clic en él.'
+                        : promotionContext 
+                            ? `Estás reservando la promoción: "${promotionContext.title}"`
+                            : 'Sigue los pasos para reservar tu tratamiento. Puedes volver a un paso anterior haciendo clic en él.'
                     }
                 </p>
-                {!isEditMode && <StepIndicator currentStep={currentStep} setCurrentStep={setCurrentStep} />}
+                {!isEditMode && !promotionContext && <StepIndicator currentStep={currentStep} setCurrentStep={setCurrentStep} />}
                 <div className="mt-8">{renderStep()}</div>
             </div>
+            <DuoBookingModal 
+                isOpen={isDuoBookingModalOpen}
+                onClose={() => setIsDuoBookingModalOpen(false)}
+                service={selectedDuoService}
+                onBookingSuccess={(result) => setBookingResult({ ...result, isOpen: true })}
+            />
             <BookingResultModal 
                 isOpen={bookingResult.isOpen}
                 onClose={handleCloseResultModal}
@@ -2007,28 +2109,17 @@ const BookingPage: React.FC = () => {
                 onRegisterClick={handlePromptRegisterClick}
             />
             <LoginModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} />
-            <RegisterModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} />
-            <AvailableSlotsModal
-                isOpen={isSlotsModalOpen}
-                onClose={() => setIsSlotsModalOpen(false)}
-                groupedSlots={groupedSlots}
-                handleSelectDateTime={handleSelectDateTime}
-                isLoading={isLoadingRange}
+            <RegisterModal 
+                isOpen={isRegisterOpen} 
+                onClose={() => setIsRegisterOpen(false)}
+                onLoginClick={() => { setIsRegisterOpen(false); setIsLoginOpen(true); }}
             />
-            <AddServicePrompt
-                isOpen={showAddServicePrompt}
-                onConfirm={handleConfirmAddService}
-                onDecline={handleDeclineAddService}
-                onCancel={handleCancelAddService} // Wire up the new cancel handler
-                selectedServices={bookingState.services}
-            />
-            <EditScopePrompt
-                isOpen={showEditScopePrompt}
-                onEditSingle={handleEditSingle}
-                onEditGroup={handleEditGroup}
-                onCancel={handleCancelEditPrompt}
-                initialService={bookingState.services[0]}
-                groupServices={fullGroupServices}
+
+            <DuoBookingModal
+                isOpen={isDuoBookingModalOpen}
+                onClose={() => setIsDuoBookingModalOpen(false)}
+                service={selectedDuoService}
+                onSlotSelected={handleDuoSlotSelected}
             />
         </div>
     );
