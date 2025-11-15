@@ -300,7 +300,7 @@ const DateTimeStep: React.FC<DateTimeStepProps> = ({
                     <div className="flex items-center justify-between mb-4">
                         <button onClick={() => setWeekOffset(weekOffset - 1)} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled={weekOffset === 0}><ChevronLeftIcon className="w-6 h-6" /></button>
                         <span className="font-semibold text-secondary">
-                            {weekDays[0].toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                            {`Semana del ${weekDays[0].getDate()} al ${weekDays[6].getDate()} de ${weekDays[0].toLocaleDateString('es-ES', { month: 'long' })} de ${weekDays[0].getFullYear()}`}
                         </span>
                         <button onClick={() => setWeekOffset(weekOffset + 1)} className="p-2 rounded-full hover:bg-gray-100"><ChevronRightIcon className="w-6 h-6" /></button>
                     </div>
@@ -584,6 +584,7 @@ const BookingPage: React.FC = () => {
     
             const [promotionContext, setPromotionContext] = useState<Promotion | null>(null);
             const [showAddServicePrompt, setShowAddServicePrompt] = useState(false);
+            const [shouldShowAddServicePromptOnNextSelection, setShouldShowAddServicePromptOnNextSelection] = useState(true);
 
     
 
@@ -1154,28 +1155,55 @@ const BookingPage: React.FC = () => {
 
 
 
-    const filteredServices = useMemo(() => {
-
-        return services.filter(service => {
-
-            const matchesCategory = selectedCategory === 'Todos' || service.category === selectedCategory;
-
-            const matchesSearch = service.name.toLowerCase().includes(searchTerm.toLowerCase());
-
-            const isAlreadySelected = bookingState.services.some(s => s.id === service.id);
-
-            return matchesCategory && matchesSearch && !isAlreadySelected;
-
-        });
-
-    }, [searchTerm, selectedCategory, services, bookingState.services]);
+                    const filteredServices = useMemo(() => {
 
 
 
-    useEffect(() => {
-        // This effect runs when the component mounts and when the base data is loaded.
-        // It handles setting up the initial state from URL parameters.
-        if (isLoadingData) return; // Wait until services/professionals are loaded
+                        return services.filter(service => {
+
+
+
+                            const matchesCategory = selectedCategory === 'Todos' || service.category === selectedCategory;
+
+
+
+                            const matchesSearch = service.name.toLowerCase().includes(searchTerm.toLowerCase());
+
+
+
+                            const isAlreadySelected = bookingState.services.some(s => s.id === service.id);
+
+
+
+                            return matchesCategory && matchesSearch && !isAlreadySelected;
+
+
+
+                        });
+
+
+
+                    }, [searchTerm, selectedCategory, services, bookingState.services]);
+
+
+
+                
+
+
+
+                    useEffect(() => {
+
+
+
+                        // This effect runs when the component mounts and when the base data is loaded.
+
+
+
+                        // It handles setting up the initial state from URL parameters.
+
+
+
+                        if (isLoadingData) return; // Wait until services/professionals are loaded
 
         const urlParams = new URLSearchParams(location.search);
         const serviceIdsParam = urlParams.get('serviceIds');
@@ -1614,34 +1642,96 @@ const BookingPage: React.FC = () => {
                     setIsDuoBookingModalOpen(true);
                 } else {
                     addService(service);
-                    setShowAddServicePrompt(true);
+                    if (shouldShowAddServicePromptOnNextSelection) {
+                        setShowAddServicePrompt(true);
+                        setShouldShowAddServicePromptOnNextSelection(false); // Only show once per selection until user confirms adding more
+                    }
                 }
             };
 
 
 
-    const handleConfirmAddService = () => {
-
-        setShowAddServicePrompt(false);
-
-        // User stays on Step 1 to select another service
-
-    };
+        const handleConfirmAddService = () => {
 
 
 
-    const handleDeclineAddService = () => {
+            setShowAddServicePrompt(false);
 
-        setShowAddServicePrompt(false);
 
-        setCurrentStep(2);
 
-    };
+            setShouldShowAddServicePromptOnNextSelection(true); // User wants to add another service
 
-    const handleCancelAddService = () => {
-        setShowAddServicePrompt(false);
-        resetBooking(); // Reset the booking state to clear selected services
-    };
+
+
+            // User stays on Step 1 to select another service
+
+
+
+        };
+
+
+
+    
+
+
+
+        const handleDeclineAddService = () => {
+
+
+
+            setShowAddServicePrompt(false);
+
+
+
+            setShouldShowAddServicePromptOnNextSelection(false); // User is done adding services
+
+
+
+            setCurrentStep(2);
+
+
+
+        };
+
+
+
+    
+
+
+
+            const handleCancelAddService = () => {
+
+
+
+    
+
+
+
+                setShowAddServicePrompt(false);
+
+
+
+    
+
+
+
+                resetBooking(); // Reset the booking state to clear selected services
+
+
+
+    
+
+
+
+                setShouldShowAddServicePromptOnNextSelection(true); // Reset flag so prompt can appear again if user selects a service
+
+
+
+    
+
+
+
+            };
 
 
 
@@ -2090,12 +2180,6 @@ const BookingPage: React.FC = () => {
                 {!isEditMode && !promotionContext && <StepIndicator currentStep={currentStep} setCurrentStep={setCurrentStep} />}
                 <div className="mt-8">{renderStep()}</div>
             </div>
-            <DuoBookingModal 
-                isOpen={isDuoBookingModalOpen}
-                onClose={() => setIsDuoBookingModalOpen(false)}
-                service={selectedDuoService}
-                onBookingSuccess={(result) => setBookingResult({ ...result, isOpen: true })}
-            />
             <BookingResultModal 
                 isOpen={bookingResult.isOpen}
                 onClose={handleCloseResultModal}
@@ -2115,11 +2199,37 @@ const BookingPage: React.FC = () => {
                 onLoginClick={() => { setIsRegisterOpen(false); setIsLoginOpen(true); }}
             />
 
+            <AddServicePrompt
+                key={String(showAddServicePrompt)}
+                isOpen={showAddServicePrompt}
+                onConfirm={handleConfirmAddService}
+                onDecline={handleDeclineAddService}
+                onCancel={handleCancelAddService}
+                selectedServices={bookingState.services}
+            />
+
+            <EditScopePrompt
+                isOpen={showEditScopePrompt}
+                onEditSingle={handleEditSingle}
+                onEditGroup={handleEditGroup}
+                onCancel={handleCancelEditPrompt}
+                initialService={bookingState.appointmentsToEdit ? bookingState.appointmentsToEdit[0].service : null}
+                groupServices={fullGroupServices}
+            />
+
             <DuoBookingModal
                 isOpen={isDuoBookingModalOpen}
                 onClose={() => setIsDuoBookingModalOpen(false)}
                 service={selectedDuoService}
                 onSlotSelected={handleDuoSlotSelected}
+            />
+
+            <AvailableSlotsModal
+                isOpen={isSlotsModalOpen}
+                onClose={() => setIsSlotsModalOpen(false)}
+                groupedSlots={groupedSlots}
+                handleSelectDateTime={handleSelectDateTime}
+                isLoading={isLoadingRange}
             />
         </div>
     );

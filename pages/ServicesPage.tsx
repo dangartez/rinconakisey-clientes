@@ -156,7 +156,7 @@ const ServicesPage: React.FC = () => {
       {/* Modal de confirmación */}
       <ServiceConfirmationModal
         isOpen={showConfirmationModal}
-        service={selectedService}
+        services={selectedService ? [selectedService] : null}
         onConfirm={handleConfirmService}
         onDecline={handleDeclineService}
         onCancel={handleCancelSelection}

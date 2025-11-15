@@ -146,7 +146,7 @@ const HomePage: React.FC = () => {
 
         setBookingResult({ isOpen: true, status: 'success', message: 'Procesando tu reserva...' });
 
-        const { data, error } = await supabase.rpc('create_duo_appointment_with_promo_v7', {
+        const { data, error } = await supabase.rpc('create_duo_appointment_with_promo', {
             p_client_id: user.id,
             p_service_id: selectedDuoService.id,
             p_start_time: slot,
